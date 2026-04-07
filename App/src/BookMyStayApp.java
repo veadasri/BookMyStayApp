@@ -1,103 +1,100 @@
+import java.io.*;
 import java.util.*;
 
-class Booking {
-    String bookingId;
-    String roomType;
-    String roomId;
-    boolean active;
+class SystemState implements Serializable {
 
-    public Booking(String bookingId, String roomType, String roomId) {
-        this.bookingId = bookingId;
-        this.roomType = roomType;
-        this.roomId = roomId;
-        this.active = true;
+    Map<String, Integer> inventory;
+    List<String> bookingHistory;
+
+    public SystemState(Map<String, Integer> inventory, List<String> bookingHistory) {
+        this.inventory = inventory;
+        this.bookingHistory = bookingHistory;
     }
 }
 
-class InvalidCancellationException extends Exception {
-    public InvalidCancellationException(String message) {
-        super(message);
+// Persistence Service
+class PersistenceService {
+
+    private static final String FILE_NAME = "hotel_state.dat";
+
+    // Save state to file
+    public static void saveState(SystemState state) {
+
+        try (ObjectOutputStream out =
+                     new ObjectOutputStream(new FileOutputStream(FILE_NAME))) {
+
+            out.writeObject(state);
+            System.out.println("System state saved successfully.");
+
+        } catch (IOException e) {
+            System.out.println("Error saving system state: " + e.getMessage());
+        }
+    }
+
+    public static SystemState loadState() {
+
+        try (ObjectInputStream in =
+                     new ObjectInputStream(new FileInputStream(FILE_NAME))) {
+
+            SystemState state = (SystemState) in.readObject();
+            System.out.println("System state restored successfully.");
+            return state;
+
+        } catch (Exception e) {
+
+            System.out.println("No valid persistence file found. Starting fresh.");
+            return null;
+        }
     }
 }
 
-class CancellationService {
+class BookingSystem {
 
-    Map<String, Booking> bookings = new HashMap<>();
     Map<String, Integer> inventory = new HashMap<>();
-    Stack<String> rollbackStack = new Stack<>();
     List<String> bookingHistory = new ArrayList<>();
 
-    public CancellationService() {
-        inventory.put("Single", 5);
-        inventory.put("Double", 3);
-        inventory.put("Suite", 2);
-    }
+    public BookingSystem() {
 
-    public void confirmBooking(String bookingId, String roomType) {
+        SystemState state = PersistenceService.loadState();
 
-        if (!inventory.containsKey(roomType) || inventory.get(roomType) == 0) {
-            System.out.println("Booking failed. Room not available.");
-            return;
+        if (state != null) {
+            inventory = state.inventory;
+            bookingHistory = state.bookingHistory;
+        } else {
+            inventory.put("Single", 5);
+            inventory.put("Double", 3);
+            inventory.put("Suite", 2);
         }
-
-        String roomId = roomType + "_" + UUID.randomUUID().toString().substring(0,4);
-
-        Booking booking = new Booking(bookingId, roomType, roomId);
-
-        bookings.put(bookingId, booking);
-        inventory.put(roomType, inventory.get(roomType) - 1);
-
-        bookingHistory.add("BOOKED: " + bookingId);
-
-        System.out.println("Booking confirmed. Room ID: " + roomId);
     }
 
-    public void cancelBooking(String bookingId) {
+    public void bookRoom(String roomType) {
 
-        try {
+        int available = inventory.getOrDefault(roomType, 0);
 
-            if (!bookings.containsKey(bookingId)) {
-                throw new InvalidCancellationException("Reservation does not exist.");
-            }
+        if (available > 0) {
 
-            Booking booking = bookings.get(bookingId);
+            inventory.put(roomType, available - 1);
+            bookingHistory.add("Booked " + roomType);
 
-            if (!booking.active) {
-                throw new InvalidCancellationException("Booking already cancelled.");
-            }
+            System.out.println("Booking successful.");
 
-            rollbackStack.push(booking.roomId);
-
-            inventory.put(booking.roomType,
-                    inventory.get(booking.roomType) + 1);
-
-
-            booking.active = false;
-
-            bookingHistory.add("CANCELLED: " + bookingId);
-
-            System.out.println("Cancellation successful.");
-            System.out.println("Released Room ID: " + rollbackStack.pop());
-
-        } catch (InvalidCancellationException e) {
-
-            System.out.println("Cancellation failed: " + e.getMessage());
-
+        } else {
+            System.out.println("Room not available.");
         }
     }
 
     public void showInventory() {
-        System.out.println("\nCurrent Inventory:");
+
+        System.out.println("\nInventory:");
         for (String room : inventory.keySet()) {
             System.out.println(room + " : " + inventory.get(room));
         }
     }
 
-    public void showHistory() {
-        System.out.println("\nBooking History:");
-        for (String record : bookingHistory) {
-            System.out.println(record);
-        }
+    public void shutdown() {
+
+        SystemState state = new SystemState(inventory, bookingHistory);
+        PersistenceService.saveState(state);
     }
 }
 
@@ -105,20 +102,15 @@ public class BookMyStayApp {
 
     public static void main(String[] args) {
 
-        CancellationService service = new CancellationService();
+        BookingSystem system = new BookingSystem();
 
-        service.confirmBooking("B101", "Single");
-        service.confirmBooking("B102", "Double");
+        system.showInventory();
 
-        service.showInventory();
+        system.bookRoom("Single");
+        system.bookRoom("Double");
 
-        service.cancelBooking("B101");
+        system.showInventory();
 
-        service.cancelBooking("B999");
-
-        service.cancelBooking("B101");
-        service.showInventory();
-
-        service.showHistory();
+        system.shutdown();
     }
 }
